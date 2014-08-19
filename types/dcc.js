@@ -114,12 +114,15 @@ TypeDcc.prototype.acceptRequest = function(handle){
   if(!that.sessions[handle]) return
   var s = propCopy(that.sessions[handle])
   var debug = require('debug')(['irc:ctcp:dcc',s.type.toLowerCase(),handle].join(':'))
-  if(fs.existsSync(s.filename)){
-    debug('File Exists (' + s.filename + ')')
-    that.emit('error',handle,'FileExists')
-    return
+  var _recvFile = null
+  if('SEND' === s.type && s.filename){
+    if(fs.existsSync(s.filename)){
+      debug('File Exists (' + s.filename + ')')
+      that.emit('error',handle,'FileExists')
+      return
+    }
+    _recvFile = fs.createWriteStream(s.filename)
   }
-  var _recvFile = fs.createWriteStream(s.filename)
   debug('Connecting to ' + [s.address,s.port].join(':'))
   that.emit('connecting',handle)
   var dccSocket = that.sockets[handle] = net.connect(s.port,s.address,function(){
