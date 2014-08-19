@@ -2,6 +2,8 @@
 var debug = require('debug')('irc:ctcp')
 var moment = require('moment')
 
+var TypeDcc = require('./types/dcc')
+
 var propCopy = function(obj){return JSON.parse(JSON.stringify(obj))}
 
 
@@ -15,7 +17,8 @@ var CtcpPlugin = function(client){
   var that = this
   that.client = client
   that.options = {}
-  that.options.version = 'undefined'
+  that.defaultVersion = that.mkVersion('UNKNOWN')
+  that.options.version = that.defaultVersion
 }
 
 
@@ -37,7 +40,26 @@ CtcpPlugin.prototype.getOption = function(option){
  */
 CtcpPlugin.prototype.setOption = function(option,value){
   var that = this
+  if('version' === option) value = that.mkVersion(value)
+  //use magic 'versionRaw' option to bypass the above convenience
+  if('versionRaw' === option) option = 'version'
+  debug('setting options[\''+option+'\'] = ' + value)
   that.options[option] = value
+}
+
+
+/**
+ * Build a version string
+ * @param {string} appName Application name (middle section of the "colon standard")
+ * @return {string}
+ */
+CtcpPlugin.prototype.mkVersion = function(appName){
+  var that = this
+  return [
+    'irc-connect-ctcp',
+      appName || 'UNKNOWN',
+      'NodeJS=' + process.versions.node + '+(V8=' + process.versions.v8 + ')'
+    ].join(':')
 }
 
 
@@ -89,6 +111,13 @@ CtcpPlugin.prototype.payloadDecode = function(event){
   return rv
 }
 
+//convenience for below debugs
+var debugFmt= function(source,target,type,message){
+  var msg = message
+  if(Array.isArray(message)) msg = message.join(' ')
+  return [source,target,type.toUpperCase(),'[' + msg + ']'].join(' ')
+}
+
 
 /**
  * Send a CTCP Request
@@ -98,7 +127,7 @@ CtcpPlugin.prototype.payloadDecode = function(event){
  */
 CtcpPlugin.prototype.sendRequest = function(target,type,params){
   var that = this
-  debug('send CTCP_RESPONSE',that.client.nick(),target,type.toUpperCase(),params)
+  debug('send CTCP_REQUEST ' + debugFmt(that.client.nick(),target,type,params))
   that.client.send(this.payloadEncode('req',target,type.toUpperCase(),params))
 }
 
@@ -111,7 +140,7 @@ CtcpPlugin.prototype.sendRequest = function(target,type,params){
  */
 CtcpPlugin.prototype.sendResponse = function(target,type,params){
   var that = this
-  debug('send CTCP_RESPONSE',that.client.nick(),target,type.toUpperCase(),params)
+  debug('send CTCP_RESPONSE ' + debugFmt(that.client.nick(),target,type,params))
   that.client.send(this.payloadEncode('res',target,type.toUpperCase(),params))
 }
 
@@ -122,17 +151,21 @@ CtcpPlugin.prototype.sendResponse = function(target,type,params){
  * @return {void} to ignore non-CTCP payload
  */
 CtcpPlugin.prototype.recvRequest = function(event){
-  if(!this.isPayload(event)) return
-  var c = this.payloadDecode(event)
-  debug('recv CTCP_REQUEST',c.nick,c.target,c.type,c.params)
-  if('PING' === c.type){this.sendResponse(c.nick,c.type,c.params[0])}
-  if('TIME' === c.type){this.sendResponse(c.nick,c.type,moment().format('ddd MMM DD HH:mm:ss YYYY ZZ'))}
-  if('VERSION' === c.type && this.options.version){this.sendResponse(c.nick,c.type,this.options.version)}
-  this.client.emit('ctcp_request',{
+  var that = this
+  if(!that.isPayload(event)) return
+  var c = that.payloadDecode(event)
+  debug('recv CTCP_REQUEST ' + debugFmt(c.nick,c.target,c.type,c.message))
+  if('PING' === c.type){that.sendResponse(c.nick,c.type,c.params[0])}
+  if('TIME' === c.type){that.sendResponse(c.nick,c.type,moment().format('ddd MMM DD HH:mm:ss YYYY ZZ'))}
+  if('VERSION' === c.type && that.options.version){
+    if(that.defaultVersion === that.options.version)
+      debug('NOTE: you should set a version using irc.client.ctcp.setOption(), replying with default')
+    that.sendResponse(c.nick,c.type,that.options.version)
+  }
+  that.client.emit('ctcp_request',{
     nick: c.nick,
     user: c.user,
     host: c.host,
-    command: 'CTCP_REQUEST',
     type: c.type,
     params: c.params,
     message: c.message
@@ -146,14 +179,14 @@ CtcpPlugin.prototype.recvRequest = function(event){
  * @return {void} to ignore non-CTCP payload
  */
 CtcpPlugin.prototype.recvResponse = function(event){
-  if(!this.isPayload(event)) return
-  var c = this.payloadDecode(event)
-  debug('recv CTCP_RESPONSE',c.nick,c.target,c.type,c.params)
-  this.client.emit('ctcp_response',{
+  var that = this
+  if(!that.isPayload(event)) return
+  var c = that.payloadDecode(event)
+  debug('recv CTCP_RESPONSE ' + debugFmt(c.nick,c.target,c.type,c.params))
+  that.client.emit('ctcp_response',{
     nick: c.nick,
     user: c.user,
     host: c.host,
-    command: 'CTCP_RESPONSE',
     type: c.type,
     params: c.params,
     message: c.message
@@ -164,10 +197,13 @@ CtcpPlugin.prototype.recvResponse = function(event){
 /**
  * Export irc-connect plugin definition
  * @type {object}
+ * @return {void} fire escape
  */
 exports = module.exports = {
+  dcc: TypeDcc,
   __irc: function(client){
     var ctcp = new CtcpPlugin(client)
+    if(!ctcp) return
     client.ctcp = ctcp
     //client function bindery
     client.isCtcp = ctcp.isPayload.bind(ctcp)
@@ -177,5 +213,6 @@ exports = module.exports = {
     client
       .on('PRIVMSG', ctcp.recvRequest.bind(ctcp))
       .on('NOTICE', ctcp.recvResponse.bind(ctcp))
+    debug('Plugin registered')
   }
 }

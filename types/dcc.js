@@ -3,22 +3,64 @@ var debug = require('debug')('irc:ctcp:dcc')
 var fs = require('fs')
 var ip = require('ip')
 var net = require('net')
+var merge = require('merge-recursive')
+var os = require('os')
 var path = require('path')
 var shortId = require('shortid')
 
 var generateHandle = function(){return shortId.generate().replace(/[-_]/g,'')}
+var propCopy = function(obj){return JSON.parse(JSON.stringify(obj))}
 
 
 
 /**
  * Plugin constructor, contain reference to client
- * @param {Irc} irc Reference to Irc helper object
+ * @param {object} client Reference to irc-connect client object
  * @constructor
  */
-var CtcpDcc = function(irc){
+var TypeDcc = function(client){
+  if(!client.ctcp){
+    debug('irc-connect-ctcp plugin not loaded, bailing')
+    return false
+  }
+  //safety check complete
   var that = this
-  that.conn = irc
+  that.client = client
   that.options = {banner:'DCC CHAT ready'}
+  that.sessions = {}
+  that.sockets = {}
+  return that
+}
+
+
+/**
+ * Event receiver for ctcp_request events
+ * @param {object} event Event from irc-connect-ctcp
+ * @return {void} fire escape
+ */
+TypeDcc.prototype.recvRequest = function(event){
+  var that = this
+  var type = that.getDccType(event)
+  //bail on non-DCC or unhandled types
+  if(!type || -1 === ['CHAT','SEND'].indexOf(type)) return
+  var handle = generateHandle()
+  that.sessions[handle] = {
+    nick: event.nick,
+    user: event.user,
+    host: event.host,
+    type: type,
+    argument: event.params[1],
+    address: ip.fromLong(event.params[2]),
+    port: +event.params[3]
+  }
+  if('SEND' === type){
+    that.sessions[handle].filename = [os.tmpdir(),that.sessions[handle].argument].join(path.sep)
+    if(-1 < event.params[4]){
+      that.sessions[handle].size = +event.params[4]
+      that.sessions[handle].wrote = 0
+    }
+  }
+  that.emit('request',handle)
 }
 
 
@@ -27,112 +69,135 @@ var CtcpDcc = function(irc){
  * @param {object} event Event from CTCP plugin event
  * @return {string|boolean} Type, or false if not DCC
  */
-CtcpDcc.prototype.getDccType = function(event){
+TypeDcc.prototype.getDccType = function(event){
   return ('DCC' === event.type) ? event.params[0].toUpperCase() : false
 }
 
 
 /**
- * Register plugin and return self-reference
- * @return {CtcpDcc}
+ * Emit a message wrapped with standard stuff
+ * @param {string} what Emit subject ('request', 'error', 'status', etc)
+ * @param {string} handle Session handle
+ * @param {object} append Things to add into the session object before emitting
  */
-CtcpDcc.prototype.register = function(){
+TypeDcc.prototype.emit = function(what,handle,append){
   var that = this
-  if(!that.irc.conn.ctcp){
-    debug('irc-connect CTCP plugin not loaded, bailing')
-    return false
+  var s = propCopy(that.sessions[handle])
+  var add = {handle:handle}
+  if('error' === what && 'string' === typeof append) add.message = append
+  if('object' !== typeof append) append = {}
+  var rv = merge(s,add,append)
+  var e = ['ctcp_dcc',s.type.toLowerCase(),what].join('_')
+  debug(['emitting',e,JSON.stringify(rv)].join(' '))
+  that.client.emit(e,rv)
+}
+
+
+/**
+ * Send a DCC CHAT message to an established Session handle
+ * @param {string} handle Session handle
+ * @param {string} message Message to send
+ */
+TypeDcc.prototype.sendChat = function(handle,message){
+  var that = this
+  that.sockets[handle].write(message + '\n')
+}
+
+
+/**
+ * Accept an incoming request (userspace does this in response to the initial ctcp_dcc_request event)
+ * @param {string} handle Session handle
+ * @return {void} fire escape
+ */
+TypeDcc.prototype.acceptRequest = function(handle){
+  var that = this
+  if(!that.sessions[handle]) return
+  var s = propCopy(that.sessions[handle])
+  var debug = require('debug')(['irc:ctcp:dcc',s.type.toLowerCase(),handle].join(':'))
+  if(fs.existsSync(s.filename)){
+    debug('File Exists (' + s.filename + ')')
+    that.emit('error',handle,'FileExists')
+    return
   }
-  that.irc.conn.on('ctcp_request',function(event){
-    var type = that.getDccType(event)
-    //bail on non-DCC or unhandled types
-    if(!type || -1 === ['CHAT','SEND'].indexOf(type)) return
-    var handle = generateHandle()
-    var argument = event.params[1]
-    var address = ip.fromLong(event.params[2])
-    var port = +event.params[3]
-    var size = +event.params[4]
-    var _recvFile = null
-    var params = {
-      type: type,
-      argument: argument,
-      address: address,
-      port: port
-    }
-    if('SEND' === type && size) params.size = +size
-    that.irc.conn.emit('ctcp_dcc_request',{
-      nick: event.nick,
-      user: event.user,
-      host: event.host,
-      command: 'CTCP_DCC_REQUEST',
-      type: type,
-      handle: handle,
-      params: params
+  var _recvFile = fs.createWriteStream(s.filename)
+  debug('Connecting to ' + [s.address,s.port].join(':'))
+  that.emit('connecting',handle)
+  var dccSocket = that.sockets[handle] = net.connect(s.port,s.address,function(){
+    debug('Connected')
+    that.emit('connect',handle)
+    dccSocket.on('error',function(err){
+      debug('ERROR:',err)
+      that.emit('error',handle,{message:err})
     })
-    debug('Connecting to ' + [address,port].join(':'))
-    var dccSocket = net.connect(port,address,function(){
-        debug('Connected')
-        dccSocket.on('error',function(err){
-          debug('ERROR:',err)
-          that.irc.conn.emit('ctcp_dcc_error',{nick:event.nick,handle:handle,message:err})
-        })
-        dccSocket.on('end',function(){
-          debug('Connection closed')
-          that.irc.conn.emit('ctcp_dcc_closed',{nick:event.nick,handle:handle})
-        })
-        switch(type){
-        case 'CHAT':
-          dccSocket.on('data',function(data){
-            var rv = {nick:event.nick,handle:handle,message:data.toString().trim()}
-            debug('emit ctcp_dcc_chat:',rv)
-            that.irc.conn.emit('ctcp_dcc_chat',rv)
-          })
-          if(that.options.banner) dccSocket.write(that.options.banner + '\n')
-          break
-        case 'SEND':
-          var fname = [fs.realpathSync('./'),argument].join(path.sep)
-          if(fs.existsSync(fname)){
-            debug('File Exists (' + fname + ')')
-            dccSocket.end()
-          }
-          else{
-            _recvFile = fs.createWriteStream(fname)
-            _recvFile.on('open',function(){
-              debug('Saving to file ' + fname)
-              dccSocket.on('end',function(){
-                _recvFile.end(function(){
-                  debug('Saved ' + _recvFile.bytesWritten + ' bytes to ' + fname +
-                    ((size === _recvFile.bytesWritten) ? ' [size good!]' : ' [size BAD should be ' + size + ']'))
-                })
-              })
-              dccSocket.on('data',function(data){
-                dccSocket.pause()
-                if(_recvFile){
-                  _recvFile.write(data,function(){
-                    var bytesWritten = _recvFile.bytesWritten
-                    var buf = new Buffer([0,0,0,0])
-                    buf.writeUInt32BE(bytesWritten,0)
-                    dccSocket.write(buf,function(){
-                      dccSocket.resume()
-                    })
-                  })
-                }
-              })
-            })
-          }
-          break
-        default:
-          debug('Unknown CTCP DCC type:',type)
-          break
-        }
-      })
+    dccSocket.on('end',function(){
+      debug('Connection closed')
+      that.emit('close',handle)
+    })
   })
-  debug('Plugin registered')
-  return that
+  switch(s.type){
+  case 'CHAT':
+    dccSocket.on('data',function(data){
+      that.emit('message',handle,{message:data.toString().trim()})
+    })
+    if(that.options.banner) dccSocket.write(that.options.banner + '\n')
+    break
+  case 'SEND':
+    _recvFile.on('open',function(){
+      debug('Saving to file ' + s.filename)
+      that.emit('open',handle)
+      var reporter
+      var report = function(){
+        that.emit('progress',handle)
+        reporter = setTimeout(report,1000)
+      }
+      reporter = setTimeout(report,1000)
+      dccSocket.on('end',function(){
+        _recvFile.end(function(){
+          clearTimeout(reporter)
+          that.sessions[handle].wrote = _recvFile.bytesWritten
+          that.emit('progress',handle)
+          var success = (s.size === that.sessions[handle].wrote)
+          debug('Saved ' + that.sessions[handle].wrote + ' bytes to ' + s.filename +
+            (success ? ' [size good!]' : ' [size BAD should be ' + s.size + ']'))
+          that.emit('complete',handle,{success: success})
+        })
+      })
+      dccSocket.on('data',function(data){
+        dccSocket.pause()
+        _recvFile.write(data,function(){
+          that.sessions[handle].wrote = _recvFile.bytesWritten
+          var buf = new Buffer([0,0,0,0])
+          buf.writeUInt32BE(that.sessions[handle].wrote,0)
+          dccSocket.write(buf,function(){
+            dccSocket.resume()
+          })
+        })
+      })
+    })
+    break
+  default:
+    debug('Unknown CTCP DCC type:',s.type)
+    break
+  }
 }
 
 
 /**
  * Export plugin
- * @type {CtcpDcc}
+ * @type {object}
+ * @return {void} fire escape
  */
-module.exports = CtcpDcc
+module.exports = {
+  __irc: function(client){
+    var dcc = new TypeDcc(client)
+    if(!dcc) return
+    client.ctcp.dcc = dcc
+    //client function bindery
+    client.acceptDccRequest = dcc.acceptRequest.bind(dcc)
+    client.sendDccChat = dcc.sendChat.bind(dcc)
+    //client event hooks
+    client
+      .on('ctcp_request',dcc.recvRequest.bind(dcc))
+    debug('Plugin registered')
+  }
+}
