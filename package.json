@@ -1,29 +1,28 @@
 {
-  "author": "Tony Butler <spudz76@gmail.com>",
   "name": "irc-connect-ctcp",
-  "description": "CTCP support plugin for irc-connect",
   "version": "0.0.2",
-  "homepage": "http://github.com/snailjs/irc-connect-ctcp",
+  "description": "CTCP support plugin for irc-connect",
+  "main": "index.js",
+  "license": "MIT",
+  "author": "Tony Butler <spudz76@gmail.com>",
+  "homepage": "https://github.com/snailjs/irc-connect-ctcp",
+  "bugs": "https://github.com/snailjs/irc-connect-ctcp/issues",
   "repository": {
     "type": "git",
     "url": "https://github.com/snailjs/irc-connect-ctcp.git"
   },
-  "main": "index.js",
   "keywords": [
     "irc-connect",
     "plugin",
     "CTCP",
     "DCC"
   ],
-  "engines": {
-    "node": ">=0.10.0"
-  },
   "dependencies": {
-    "async": "^0.9.0",
-    "debug": "^1.0.4",
-    "ip": "^0.3.1",
-    "merge-recursive": "0.0.3",
-    "moment": "^2.7.0",
-    "shortid": "^2.0.0"
+    "async": "0.9.x",
+    "debug": "1.0.x",
+    "ip": "0.3.x",
+    "merge-recursive": "0.0.x",
+    "moment": "2.8.x",
+    "shortid": "2.0.x"
   }
 }
