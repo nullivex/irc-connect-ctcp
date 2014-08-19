@@ -46,7 +46,7 @@ client.sendCtcpResponse(target, type, params)
 // DCC CHAT incoming request
 client.on('ctcp_dcc_chat_request',function(event){
   //figure out if you want to accept this DCC CHAT, if you do...
-  that.conn.acceptDccRequest(event.handle)
+  client.acceptDccRequest(event.handle)
   //otherwise, ignore it and nothing further will happen
 })
 client.on('ctcp_dcc_chat_error',...)      // any errors, reason is in event.message
@@ -59,7 +59,7 @@ client.on('ctcp_dcc_chat_close',...)      // socket closed (complete or not)
 client.on('ctcp_dcc_send_request',function(event){
   //event.filename, and if given event.size, are provided to you for decision
   //figure out if you want to accept this DCC SEND, and if you do...
-  that.conn.acceptDccRequest(event.handle)
+  client.acceptDccRequest(event.handle)
   //otherwise, ignore it and nothing further will happen
 })
 client.on('ctcp_dcc_send_error',...)      // any errors, reason is in event.message

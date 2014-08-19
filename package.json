@@ -2,7 +2,7 @@
   "author": "Tony Butler <spudz76@gmail.com>",
   "name": "irc-connect-ctcp",
   "description": "CTCP support plugin for irc-connect",
-  "version": "0.0.1",
+  "version": "0.0.2",
   "homepage": "http://github.com/snailjs/irc-connect-ctcp",
   "repository": {
     "type": "git",
