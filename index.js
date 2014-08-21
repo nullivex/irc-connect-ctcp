@@ -16,6 +16,24 @@ var Ctcp = function(){
 }
 
 
+
+/**
+ * Clone an event and keep new object properties in order
+ * @param {object} event Source irc-connect Event
+ * @constructor
+ */
+Ctcp.prototype.Event = function(event){
+  var that = this
+  var ctcpPropOrder = [
+    'nick','user','host','command',
+    'type','target','params','message'
+  ]
+  ctcpPropOrder.forEach(function(prop){
+    that[prop] = (event.hasOwnProperty(prop)) ? event[prop] : null
+  })
+}
+
+
 /**
  * Get an option
  * @param {string} key Option name
@@ -65,7 +83,7 @@ Ctcp.prototype.mkVersion = function(appName){
  * @return {string} Encoded CTCP message ready for irc send()
  */
 Ctcp.prototype.ctcpEncode = function(direction,target,type,params){
-  var cmd = ('req' === direction) ? 'PRIVMSG' : 'NOTICE'
+  var cmd = {req:'PRIVMSG',res:'NOTICE'}[direction]
   var msg = [type.toUpperCase()]
   if(params instanceof Array) params.forEach(function(p){msg.push(p)})
   else msg.push(params)
@@ -80,7 +98,8 @@ Ctcp.prototype.ctcpEncode = function(direction,target,type,params){
  */
 Ctcp.prototype.ctcpDecode = function(event){
   if(!this.isCtcp(event)) return false
-  var rv = Object.create(event)
+  var rv = new this.Event(event)
+  rv.command = {PRIVMSG:'CTCP_REQUEST',NOTICE:'CTCP_RESPONSE'}[event.command]
   rv.target = '' + event.params[0]
   var message = '' + event.params[1]
   message = (message[0] === '+') ? message.slice(2) : message.slice(1)
@@ -157,14 +176,7 @@ Ctcp.prototype.emit = function(direction,event){
   var that = this
   var e = 'ctcp_' + ({req:'request',res:'result'}[direction])
   debug(['emitting',e,JSON.stringify(event)].join(' '))
-  that.clientEmit(e,{
-    nick: event.nick,
-    user: event.user,
-    host: event.host,
-    type: event.type,
-    params: event.params,
-    message: event.message
-  })
+  that.clientEmit(e,event)
 }
 
 
@@ -204,7 +216,7 @@ Ctcp.prototype.responseRecv = function(event){
  * Export irc-connect plugin definition
  * @type {object}
  */
-exports = module.exports = {
+module.exports = {
   __irc: function(client){
     var ctcp = new Ctcp()
     //bind upper emit/send/nick

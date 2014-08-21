@@ -27,6 +27,29 @@ var Dcc = function(){
 }
 
 
+
+/**
+ * Clone a session and keep object properties in order
+ * @param {object} session Source session entry
+ * @constructor
+ */
+Dcc.prototype.Session = function(session){
+  var that = this
+  var sessionPropOrder = [
+    'handle','nick','user','host','command',
+    'type','target','argument','address','port'
+  ]
+  var sendProps = ['filename','size','wrote']
+  var setProp = function(prop){
+    that[prop] = (session.hasOwnProperty(prop)) ? session[prop] : null
+  }
+  sessionPropOrder.forEach(setProp)
+  if('SEND' === session.type){
+    sendProps.forEach(setProp)
+  }
+}
+
+
 /**
  * Get an option
  * @param {string} option Option
@@ -73,22 +96,19 @@ Dcc.prototype.requestRecv = function(event){
   //bail on non-DCC or unhandled types
   if(!type || -1 === ['CHAT','SEND'].indexOf(type)) return
   var handle = shortId.generate().replace(/[-_]/g,'')
-  that.sessions[handle] = {
-    nick: event.nick,
-    user: event.user,
-    host: event.host,
-    type: type,
-    argument: event.params[1],
-    address: ip.fromLong(event.params[2]),
-    port: +event.params[3]
-  }
+  var sess = new that.Session(event)
+  sess.type= type
+  sess.argument = event.params[1]
+  sess.address = ip.fromLong(event.params[2])
+  sess.port = +event.params[3]
   if('SEND' === type){
-    that.sessions[handle].filename = [that.options.targetPath,that.sessions[handle].argument].join(path.sep)
+    sess.filename = [that.options.targetPath,sess.argument].join(path.sep)
     if(-1 < event.params[4]){
-      that.sessions[handle].size = +event.params[4]
-      that.sessions[handle].wrote = 0
+      sess.size = +event.params[4]
+      sess.wrote = 0
     }
   }
+  that.sessions[handle] = sess
   that.emit('request',handle)
   //set the session expiration in case it is never accepted (60 seconds)
   that.sessionTimeout[handle] = setTimeout(function(){
@@ -145,7 +165,7 @@ Dcc.prototype.sendRequest = function(target,filename){
  */
 Dcc.prototype.emit = function(what,handle,append){
   var that = this
-  var s = Object.create(that.sessions[handle])
+  var s = new that.Session(that.sessions[handle])
   var add = {handle:handle}
   if('error' === what && 'string' === typeof append) add.message = append
   if('object' !== typeof append) append = {}
@@ -183,9 +203,10 @@ Dcc.prototype.clearSession = function(handle){
  */
 Dcc.prototype.requestAccept = function(handle){
   var that = this
-  if(!that.sessions[handle]) return
+  var sess = that.sessions[handle]
+  if(!sess) return
   clearTimeout(that.sessionTimeout[handle])
-  var s = Object.create(that.sessions[handle])
+  var s = new that.Session(sess)
   var debug = require('debug')(['irc:ctcp:dcc',s.type.toLowerCase(),handle].join(':'))
   var _recvFile = null
   if('SEND' === s.type && s.filename){
@@ -202,18 +223,18 @@ Dcc.prototype.requestAccept = function(handle){
     debug('Connected')
     that.emit('connect',handle)
     dccSocket.on('error',function(err){
-      debug('ERROR:',err)
+      debug('Connection ERROR:',err)
       that.emit('error',handle,{message:err})
       that.clearSession(handle)
     })
     dccSocket.on('end',function(){
       debug('Connection closed')
       that.emit('close',handle)
-      that.clearSession(handle)
     })
   })
   switch(s.type){
   case 'CHAT':
+    dccSocket.on('end',function(){ that.clearSession(handle) })
     dccSocket.on('data',function(data){
       that.emit('message',handle,{message:data.toString().trim()})
     })
@@ -232,10 +253,10 @@ Dcc.prototype.requestAccept = function(handle){
       dccSocket.on('end',function(){
         _recvFile.end(function(){
           clearTimeout(reporter)
-          that.sessions[handle].wrote = _recvFile.bytesWritten
+          sess.wrote = _recvFile.bytesWritten
           that.emit('progress',handle)
-          var success = s.size ? (s.size === that.sessions[handle].wrote) : true
-          debug('Saved ' + that.sessions[handle].wrote + ' bytes to ' + s.filename +
+          var success = s.size ? (s.size === sess.wrote) : true
+          debug('Saved ' + sess.wrote + ' bytes to ' + s.filename +
             (success ? ' [seems legit!]' : ' [size BAD should be ' + s.size + ']'))
           that.emit('complete',handle,{success: success})
           that.clearSession(handle)
@@ -244,9 +265,9 @@ Dcc.prototype.requestAccept = function(handle){
       dccSocket.on('data',function(data){
         dccSocket.pause()
         _recvFile.write(data,function(){
-          that.sessions[handle].wrote = _recvFile.bytesWritten
+          sess.wrote = _recvFile.bytesWritten
           var buf = new Buffer([0,0,0,0])
-          buf.writeUInt32BE(that.sessions[handle].wrote,0)
+          buf.writeUInt32BE(sess.wrote,0)
           dccSocket.write(buf,function(){
             dccSocket.resume()
           })

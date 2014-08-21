@@ -1,6 +1,6 @@
 {
   "name": "irc-connect-ctcp",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "CTCP support plugin for irc-connect",
   "main": "index.js",
   "license": "MIT",
