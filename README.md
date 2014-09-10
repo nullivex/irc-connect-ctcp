@@ -1,5 +1,5 @@
-irc-connect-ctcp
-================
+# irc-connect-ctcp
+[![NPM version](https://badge.fury.io/js/irc-connect-ctcp.png)](http://badge.fury.io/js/irc-connect-ctcp)
 ## `CTCP plugin for irc-connect`
 Basic `CTCP` support, emits `'ctcp_request'` and `'ctcp_response'` events, among
 others.
